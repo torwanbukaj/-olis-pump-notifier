@@ -1,31 +1,59 @@
 // This is an Arduino code for ESP8266 which uses Webhooks
 // to trigger notifications via IFTTT.com
 //
-// By joefernwright 30th May 2022
+// By torwanbukaj 4th March 2023
 // Diagnostics messages are available via Serial COM configured to 115200bps.
 //
 // Description:
-// The code triggers multiple messages in the context of a defined Webhooks "EVENT" whenever:
+// The code triggers a Webhooks message in the context of a defined Webhooks "EVENT" whenever:
 // - it connects to a local WiFi spot,
 // - boots up after getting powered on or reset,
-// - a state of D5 input of Wemos D1 Mini board (or any similar) changes.
+// - a state of D5 (default) input of Wemos D1 Mini board (or any similar) changes
+//   (preconditoned by TON and TOF timers).
+//
+// Required libraries:
+// - ESP8266 Webhooks by Rupak Poddar
+// - ESP8266WiFi.h
 //
 // Wemos D1 Mini built-in LED lights up when trying to connect to WiFi.
-// Yoo will need "ESP8266 Webhooks" library to make this program work.
+
 
 #include <ESP8266Webhook.h>
 #include <ESP8266WiFi.h>
+#include "secrets.h"
 
-#define _SSID_ "your_SSID"          // WiFi SSID
-#define _PASSWORD_ "your_password"   // WiFi Password
-#define KEY "your_webhooks_key" // Webhooks Key
-#define EVENT "pump-event"           // Webhooks Event Name
+#define MONITORED_INPUT D5
 
-// Global variables
-Webhook webhook(KEY, EVENT);
+// ------ GLOBAL VARIABLES ------
+
+// LED state
+int led_state = LOW;
+unsigned long current_led_millis = 0;  // to store current millis() value for LED blinking function
+unsigned long previous_led_millis = 0;  // to store the last time LED state was updated
+const unsigned long led_interval = 100; // blinking interval when in approved ALARM state [ms],
+                                        // compare with delay() which slows down the main loop
+
+// Webhooks
+Webhook webhook(_WEBHOOKS_KEY_, _WEBHOOKS_EVENT_);
+int response;
+
+// Input state change recognition
 bool last_state;
 bool new_state;
-int response;
+
+// TON and TOF timers
+unsigned long ton_threshold = 2000;
+unsigned long tof_threshold = 1500;
+unsigned long ton_start_marker;
+unsigned long tof_start_marker;
+bool TON_running = false;
+bool TOF_running = false;
+bool approved_alarm_state = false;
+
+// WiFi related
+const char* deviceName = "Pump_Notifier";
+
+// ------ SETUP ------
 
 void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
@@ -34,40 +62,93 @@ void setup() {
   
   connect_to_wifi();
 
-  // Initialization of the D5 input
-  pinMode(D5, INPUT);
-  last_state = digitalRead(D5);
+  // Initialization of the MONITORED_INPUT
+  pinMode(MONITORED_INPUT, INPUT_PULLUP);
+  last_state = digitalRead(MONITORED_INPUT);
   new_state = last_state;
 
   // Send "power-on" event trigger
   delay(1000);
   response = webhook.trigger("Notifier_powered_and_running!");
-  if(response == 200) Serial.println("OK");
+  if(response == 200) Serial.println("Webhook OK for Notifier_powered_and_running!");
   else Serial.println("Failed");
 }
+
+// ------ MAIN LOOP ------
 
 void loop() {
   
   // Check for a new input state
-  new_state = digitalRead(D5);
+  new_state = digitalRead(MONITORED_INPUT);
+
+  // Detection of an input change (rising or falling edge)
   if (new_state != last_state) {
       Serial.print("New input state: ");
-      if (new_state == true) {
-        Serial.println("HIGH (circuit OPEN)");
-        response = webhook.trigger("Pump-relay_circuit_OPEN!");
-      }
-      else {
-        Serial.println("LOW (circuit CLOSED)");  
-        response = webhook.trigger("Pump-relay_circuit_CLOSED_OK!"); 
-      }
-           
-  last_state = new_state;
 
-  delay(5000); // prevents too frequent messaging after a state change
-    
-  if(response == 200) Serial.println("OK");
-  else Serial.println("Failed");
+      // Detection of the rising edge before HIGH state is approved
+      if (new_state == true && approved_alarm_state == false) {
+        Serial.println("HIGH (circuit got OPEN) and not in the approved ALARM state");
+        TOF_running = false; 
+        TON_running = true;
+        ton_start_marker = millis();        
+      }
+
+      // Detection of the rising edge after HIGH state is approved
+      if (new_state == true && approved_alarm_state == true) {
+        Serial.println("HIGH (circuit got OPEN) when still in approved ALARM state");
+        TOF_running = false; 
+        TON_running = false;
+      }
+
+      // Detection of the falling edge after HIGH state is approved
+      // (it triggers TOF)
+      if (new_state == false && approved_alarm_state == true) {
+        Serial.println("LOW (circuit got CLOSED) when in approved ALARM state");
+        TOF_running = true; 
+        TON_running = false;      
+        tof_start_marker = millis();
+      }   
+
+      // Detection of the falling edge before HIGH state is approved
+      // (it does not trigger TOF)
+      if (new_state == false && approved_alarm_state == false) {
+        Serial.println("LOW (circuit got CLOSED) when not in approved ALARM state");
+        TOF_running = false; 
+        TON_running = false;      
+      }       
+
+  last_state = new_state;
   }
+
+  // TON implementation
+  if (TON_running == true) {
+    Serial.print("TON running for:"); Serial.print(millis()-ton_start_marker); Serial.println(" [ms]");
+    if(millis()-ton_start_marker >= ton_threshold) {
+      Serial.println("Entering approved ALARM state.");
+      TON_running = false;
+      approved_alarm_state = true;
+      response = webhook.trigger("Pump-relay_circuit_OPEN!");
+      if(response == 200) Serial.println("Webhooks: OK for Pump-relay_circuit_OPEN!");
+      else Serial.println("Failed");
+    }
+
+  } 
+
+  // TOF implementation
+  if (TOF_running == true) {
+    Serial.print("TOF running for:"); Serial.print(millis()-tof_start_marker); Serial.println(" [ms]");
+    if(millis()-tof_start_marker >= tof_threshold) {
+      Serial.println("Leaving approved ALARM state.");
+      TOF_running = false;
+      approved_alarm_state = false;
+      response = webhook.trigger("Pump-relay_circuit_CLOSED_OK!");
+      if(response == 200) Serial.println("Webhooks: OK for Pump-relay_circuit_CLOSED_OK!");
+      else Serial.println("Failed"); 
+    }
+  } 
+
+ // Manage in-built LED blinking fast when in approved ALARM state
+ toggle_inbuilt_led_fast();
 
   // Check WiFi connection status
   while (WiFi.status() != WL_CONNECTED) {
@@ -76,11 +157,13 @@ void loop() {
     connect_to_wifi();    
   }
   
-  delay(50); //slowing down the infinite main loop
-}
+  delay(100); //slowing down the infinite main loop
 
+} // main loop end
 
-void connect_to_wifi()  {
+// ------ HELPING FUNCTIONS ------
+
+void connect_to_wifi() {
 
   digitalWrite(LED_BUILTIN, LOW);
   WiFi.mode(WIFI_STA);
@@ -89,13 +172,17 @@ void connect_to_wifi()  {
 
   // Connect to WiFi
   Serial.println();
+  Serial.print("Device name: ");
+  Serial.println(deviceName);
+  WiFi.hostname(deviceName); 
+
   Serial.print("Connecting to: ");
   Serial.println(_SSID_);
   WiFi.begin(_SSID_, _PASSWORD_);
 
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
-    Serial.print("-");
+    Serial.print("*");
   }
   digitalWrite(LED_BUILTIN, HIGH);
 
@@ -105,8 +192,36 @@ void connect_to_wifi()  {
   // Print the IP address
   Serial.print("IP assigned by DHCP: ");
   Serial.println(WiFi.localIP());
+  // Print the MAC address
+  Serial.print("ESP Board MAC Address: ");
+  Serial.println(WiFi.macAddress());
+  // Print the Gateway IP address
+  //Serial.print("Gateway IP address: ");
+  //Serial.println(WiFi.gatewayIP());
+
+  // Print current RSSI
+  Serial.print("Current RSSI: ");
+  Serial.println(WiFi.RSSI());
 
   response = webhook.trigger("Pump-relay_connected_to_WiFi!");
-  if(response == 200) Serial.println("OK");
+  if(response == 200) Serial.println("Webhook OK for Pump-relay_connected_to_WiFi!");
   else Serial.println("Failed");
+}
+
+void toggle_inbuilt_led_fast() {
+
+  if (approved_alarm_state == true) {
+   current_led_millis = millis();
+   if (current_led_millis-previous_led_millis >= led_interval) {
+    previous_led_millis = current_led_millis;
+    if (led_state == LOW) {led_state = HIGH;} else {led_state = LOW;} // toggle LED state
+   }    
+  }
+
+  if (approved_alarm_state == false) {
+    led_state = HIGH;
+  }
+
+ digitalWrite(LED_BUILTIN, led_state); // write new LED state to the output  
+ 
 }
