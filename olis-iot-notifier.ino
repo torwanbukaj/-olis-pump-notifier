@@ -20,6 +20,9 @@
 
 #include <ESP8266Webhook.h>
 #include <ESP8266WiFi.h>
+#include <ESP8266mDNS.h>
+#include <WiFiUdp.h>
+#include <ArduinoOTA.h>
 #include "secrets.h"
 
 #define MONITORED_INPUT D5
@@ -42,8 +45,8 @@ bool last_state;
 bool new_state;
 
 // TON and TOF timers
-unsigned long ton_threshold = 2000;
-unsigned long tof_threshold = 1500;
+unsigned long ton_threshold = 1800;
+unsigned long tof_threshold = 1600;
 unsigned long ton_start_marker;
 unsigned long tof_start_marker;
 bool TON_running = false;
@@ -53,14 +56,25 @@ bool approved_alarm_state = false;
 // WiFi related
 const char* deviceName = "Pump_Notifier";
 
+// OTA related
+const char* ota_host_name = "ota-pump-notifier";
+
 // ------ SETUP ------
 
 void setup() {
+
+  // Initialization of the built-in LED output
   pinMode(LED_BUILTIN, OUTPUT);
   
+  // Initialization of the serial port
   Serial.begin(115200);
   
+  // Initialization of the WiFi connection
   connect_to_wifi();
+
+  // OTA setup
+  ota_setup();
+
 
   // Initialization of the MONITORED_INPUT
   pinMode(MONITORED_INPUT, INPUT_PULLUP);
@@ -78,6 +92,9 @@ void setup() {
 
 void loop() {
   
+  // Handling OTA
+    ArduinoOTA.handle();
+
   // Check for a new input state
   new_state = digitalRead(MONITORED_INPUT);
 
@@ -224,4 +241,42 @@ void toggle_inbuilt_led_fast() {
 
  digitalWrite(LED_BUILTIN, led_state); // write new LED state to the output  
  
+}
+
+void ota_setup() {
+
+  ArduinoOTA.setHostname(ota_host_name);
+  ArduinoOTA.setPassword(_OTA_PASSWORD_);
+  ArduinoOTA.onStart([]() {
+    String type;
+    if (ArduinoOTA.getCommand() == U_FLASH) {
+      type = "sketch";
+    } else {  // U_FS
+      type = "filesystem";
+    }
+
+    // NOTE: if updating FS this would be the place to unmount FS using FS.end()
+    Serial.println("Start updating " + type);
+  });
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\nEnd");
+  });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) {
+      Serial.println("Auth Failed");
+    } else if (error == OTA_BEGIN_ERROR) {
+      Serial.println("Begin Failed");
+    } else if (error == OTA_CONNECT_ERROR) {
+      Serial.println("Connect Failed");
+    } else if (error == OTA_RECEIVE_ERROR) {
+      Serial.println("Receive Failed");
+    } else if (error == OTA_END_ERROR) {
+      Serial.println("End Failed");
+    }
+  });
+  ArduinoOTA.begin();
 }
