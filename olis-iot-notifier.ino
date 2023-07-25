@@ -25,6 +25,10 @@
 #include <ArduinoOTA.h>
 #include "secrets.h"
 
+#include <ESPAsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include <WebSerial.h>
+
 #define MONITORED_INPUT D5
 
 // ------ GLOBAL VARIABLES ------
@@ -59,6 +63,15 @@ const char* deviceName = "Pump_Notifier";
 // OTA related
 const char* ota_host_name = "ota-pump-notifier";
 
+//Webserver for Serial output
+AsyncWebServer server(80);
+
+void recvMsg(uint8_t *data, size_t len){
+}
+
+// STRINGS
+static const char 
+
 // ------ SETUP ------
 
 void setup() {
@@ -72,9 +85,13 @@ void setup() {
   // Initialization of the WiFi connection
   connect_to_wifi();
 
+  // Initialization of the WebSerial and WebServer
+  WebSerial.begin(&server);
+  WebSerial.msgCallback(recvMsg);
+  server.begin();
+
   // OTA setup
   ota_setup();
-
 
   // Initialization of the MONITORED_INPUT
   pinMode(MONITORED_INPUT, INPUT_PULLUP);
@@ -86,7 +103,10 @@ void setup() {
   response = webhook.trigger("Notifier_powered_and_running!");
   if(response == 200) Serial.println("Webhook OK for Notifier_powered_and_running!");
   else Serial.println("Failed");
+
 }
+
+
 
 // ------ MAIN LOOP ------
 
@@ -101,10 +121,12 @@ void loop() {
   // Detection of an input change (rising or falling edge)
   if (new_state != last_state) {
       Serial.print("New input state: ");
+      WebSerial.print("New input state: ");
 
       // Detection of the rising edge before HIGH state is approved
       if (new_state == true && approved_alarm_state == false) {
         Serial.println("HIGH (circuit got OPEN) and not in the approved ALARM state");
+        WebSerial.println("HIGH (circuit got OPEN) and not in the approved ALARM state");
         TOF_running = false; 
         TON_running = true;
         ton_start_marker = millis();        
@@ -113,6 +135,7 @@ void loop() {
       // Detection of the rising edge after HIGH state is approved
       if (new_state == true && approved_alarm_state == true) {
         Serial.println("HIGH (circuit got OPEN) when still in approved ALARM state");
+        WebSerial.println("HIGH (circuit got OPEN) when still in approved ALARM state");
         TOF_running = false; 
         TON_running = false;
       }
@@ -121,6 +144,7 @@ void loop() {
       // (it triggers TOF)
       if (new_state == false && approved_alarm_state == true) {
         Serial.println("LOW (circuit got CLOSED) when in approved ALARM state");
+        WebSerial.println("LOW (circuit got CLOSED) when in approved ALARM state");
         TOF_running = true; 
         TON_running = false;      
         tof_start_marker = millis();
@@ -130,6 +154,7 @@ void loop() {
       // (it does not trigger TOF)
       if (new_state == false && approved_alarm_state == false) {
         Serial.println("LOW (circuit got CLOSED) when not in approved ALARM state");
+        WebSerial.println("LOW (circuit got CLOSED) when not in approved ALARM state");
         TOF_running = false; 
         TON_running = false;      
       }       
@@ -142,10 +167,14 @@ void loop() {
     Serial.print("TON running for:"); Serial.print(millis()-ton_start_marker); Serial.println(" [ms]");
     if(millis()-ton_start_marker >= ton_threshold) {
       Serial.println("Entering approved ALARM state.");
+      WebSerial.println("Entering approved ALARM state.");
       TON_running = false;
       approved_alarm_state = true;
       response = webhook.trigger("Pump-relay_circuit_OPEN!");
-      if(response == 200) Serial.println("Webhooks: OK for Pump-relay_circuit_OPEN!");
+      if(response == 200) {
+        Serial.println("Webhooks: OK for Pump-relay_circuit_OPEN!");
+        WebSerial.println("Webhooks: OK for Pump-relay_circuit_OPEN!");
+      }
       else Serial.println("Failed");
     }
 
@@ -156,6 +185,7 @@ void loop() {
     Serial.print("TOF running for:"); Serial.print(millis()-tof_start_marker); Serial.println(" [ms]");
     if(millis()-tof_start_marker >= tof_threshold) {
       Serial.println("Leaving approved ALARM state.");
+      WebSerial.println("Leaving approved ALARM state.");
       TOF_running = false;
       approved_alarm_state = false;
       response = webhook.trigger("Pump-relay_circuit_CLOSED_OK!");
