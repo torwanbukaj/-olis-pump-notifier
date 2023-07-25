@@ -12,14 +12,13 @@
 //   (preconditoned by TON and TOF timers).
 //
 // Required libraries:
-// - ESP8266 Webhooks by Rupak Poddar
 // - ESP8266WiFi.h
 //
 // Wemos D1 Mini built-in LED lights up when trying to connect to WiFi.
 
 
-#include <ESP8266Webhook.h>
 #include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
 #include <ESP8266mDNS.h>
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
@@ -37,7 +36,8 @@ const unsigned long led_interval = 100; // blinking interval when in approved AL
                                         // compare with delay() which slows down the main loop
 
 // Webhooks
-Webhook webhook(_WEBHOOKS_KEY_, _WEBHOOKS_EVENT_);
+String _webhooks_event_ = _WEBHOOKS_EVENT_;
+String _webhooks_key_ = _WEBHOOKS_KEY_;
 int response;
 
 // Input state change recognition
@@ -83,9 +83,10 @@ void setup() {
 
   // Send "power-on" event trigger
   delay(1000);
-  response = webhook.trigger("Notifier_powered_and_running!");
+  response = webhookTrigger("Notifier_powered_and_running!");
   if(response == 200) Serial.println("Webhook OK for Notifier_powered_and_running!");
   else Serial.println("Failed");
+
 }
 
 // ------ MAIN LOOP ------
@@ -144,7 +145,7 @@ void loop() {
       Serial.println("Entering approved ALARM state.");
       TON_running = false;
       approved_alarm_state = true;
-      response = webhook.trigger("Pump-relay_circuit_OPEN!");
+      response = webhookTrigger("Pump-relay_circuit_OPEN!");
       if(response == 200) Serial.println("Webhooks: OK for Pump-relay_circuit_OPEN!");
       else Serial.println("Failed");
     }
@@ -158,7 +159,7 @@ void loop() {
       Serial.println("Leaving approved ALARM state.");
       TOF_running = false;
       approved_alarm_state = false;
-      response = webhook.trigger("Pump-relay_circuit_CLOSED_OK!");
+      response = webhookTrigger("Pump-relay_circuit_CLOSED_OK!");
       if(response == 200) Serial.println("Webhooks: OK for Pump-relay_circuit_CLOSED_OK!");
       else Serial.println("Failed"); 
     }
@@ -220,7 +221,7 @@ void connect_to_wifi() {
   Serial.print("Current RSSI: ");
   Serial.println(WiFi.RSSI());
 
-  response = webhook.trigger("Pump-relay_connected_to_WiFi!");
+  response = webhookTrigger("Pump-relay_connected_to_WiFi!");
   if(response == 200) Serial.println("Webhook OK for Pump-relay_connected_to_WiFi!");
   else Serial.println("Failed");
 }
@@ -279,4 +280,13 @@ void ota_setup() {
     }
   });
   ArduinoOTA.begin();
+}
+
+int webhookTrigger(String value){
+  WiFiClient client;
+  HTTPClient http;
+  http.begin(client, "http://maker.ifttt.com/trigger/" + _webhooks_event_ + "/with/key/" + _webhooks_key_ + "?value1="+value);
+  int httpCode = http.GET();
+  http.end();
+  return httpCode;
 }
