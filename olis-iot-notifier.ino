@@ -16,15 +16,29 @@
 //
 // Wemos D1 Mini built-in LED lights up when trying to connect to WiFi.
 
-
-#include <ESP8266WiFi.h>
+#ifdef ESP8266
 #include <ESP8266HTTPClient.h>
+#include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
+#endif
+
+#ifdef ESP32
+#include <HTTPClient.h>
+#include <WiFi.h>
+#include <mDNS.h>
+#endif
+
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
 #include "secrets.h"
 
+#ifdef ESP8266
 #define MONITORED_INPUT D5
+#endif
+
+#ifdef ESP32
+#define MONITORED_INPUT 17
+#endif
 
 // ------ GLOBAL VARIABLES ------
 
@@ -192,7 +206,7 @@ void connect_to_wifi() {
   Serial.println();
   Serial.print("Device name: ");
   Serial.println(deviceName);
-  WiFi.hostname(deviceName); 
+  WiFi.hostname(deviceName);
 
   Serial.print("Connecting to: ");
   Serial.println(_SSID_);
