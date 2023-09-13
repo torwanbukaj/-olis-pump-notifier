@@ -37,7 +37,7 @@
 #endif
 
 #ifdef ESP32
-#define MONITORED_INPUT 17
+#define MONITORED_INPUT 4
 #endif
 
 // ------ GLOBAL VARIABLES ------
@@ -59,8 +59,8 @@ bool last_state;
 bool new_state;
 
 // TON and TOF timers
-unsigned long ton_threshold = 1800;
-unsigned long tof_threshold = 1600;
+unsigned long ton_threshold = 1300;
+unsigned long tof_threshold = 1000;
 unsigned long ton_start_marker;
 unsigned long tof_start_marker;
 bool TON_running = false;
